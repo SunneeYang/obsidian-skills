@@ -12,20 +12,113 @@ allowed_tools: ["Bash", "AskUserQuestion"]
 
 ```bash
 /obsidian-session                                          # 自动分析并生成文档
-/obsidian-session 自定义标题                              # 使用自定义标题创建文档
+/obsidian-session 自定义标题                              # 使用自定义标题创建新文档
+/obsidian-session --continue                              # 追加到当前 session 的已有文档
+/obsidian-session --file "现有文档路径"                   # 追加到指定文档
 ```
+
+## Session 持续更新机制
+
+### 同一文档的持续追加
+
+在同一个 Claude Code session 中多次使用 `/obsidian-session` 时：
+
+| 调用方式 | 行为 |
+|---------|------|
+| `/obsidian-session` | 首次调用创建新文档，后续调用追加到同一文档 |
+| `/obsidian-session 新标题` | 始终创建新文档（重置当前文档引用） |
+| `/obsidian-session --continue` | 明确追加到当前文档 |
+| `/obsidian-session --file "路径"` | 追加到指定文档 |
+
+**状态追踪**：
+
+使用临时文件追踪当前 session 的文档路径：
+
+\`\`\`bash
+# Session 文档状态文件
+SESSION_STATE_FILE="/tmp/claude-session-current-$$.txt"
+
+# 读取当前文档路径
+CURRENT_DOC=$(cat "$SESSION_STATE_FILE" 2>/dev/null || echo "")
+
+# 保存当前文档路径
+echo "Claude Code/2026-03-18/文档.md" > "$SESSION_STATE_FILE"
+\`\`\`
+
+**追加内容示例**：
+
+\`\`\`bash
+if [ -n "$CURRENT_DOC" ]; then
+    # 追加到现有文档
+    obsidian-cli create "$CURRENT_DOC" --content "$NEW_CONTENT" --append
+else
+    # 创建新文档
+    obsidian-cli create "Claude Code/$DATE/$TITLE.md" --content "$CONTENT"
+    echo "Claude Code/$DATE/$TITLE.md" > "$SESSION_STATE_FILE"
+fi
+\`\`\`
+
+### 上下文压缩前的保存提示
+
+**问题**：当对话接近上下文限制时，Claude Code 会自动压缩早期消息，导致内容缺失，影响后续分析。
+
+**解决方案**：在压缩前主动保存会话快照。
+
+**触发条件**（满足任一即提示）：
+
+| 条件 | 阈值 |
+|-----|------|
+| Token 使用率 | > 80% |
+| 对话轮次 | > 50 轮 |
+| 距离上次保存 | > 30 分钟 |
+| 重要里程碑 | Git commit、重大功能完成 |
+
+**提示消息示例**：
+
+\`\`\`
+⚠️ 检测到会话内容较多（已使用 85% token），建议先保存当前进度到 Obsidian。
+
+选项：
+1. 保存当前进度 → /obsidian-session
+2. 继续对话 → 稍后手动保存
+3. 忽略提示 → 本次会话不再提示
+
+已保存的内容将被追加到当前文档，后续可继续更新。
+\`\`\`
+
+### 断点续传支持
+
+当上下文被压缩后，再次使用 `/obsidian-session` 时：
+
+1. **读取已保存的文档**：从 Obsidian 读取当前文档内容
+2. **补充缺失信息**：基于现有文档补充新内容
+3. **更新时间戳**：更新 frontmatter 中的时间字段
+4. **标记续传点**：添加"续传"标记，说明这是从压缩点继续的
+
+**续传标记示例**：
+
+\`\`\`markdown
+## 续传记录
+
+- 📅 初始创建: 2026-03-18 10:00
+- 📝 第一次更新: 2026-03-18 11:30（上下文压缩前保存）
+- 📝 第二次更新: 2026-03-18 14:00（补充后续内容）
+\`\`\`
 
 ## 功能说明
 
 1. **分析会话内容** - 提取关键问题、解决方案、决策和成果
 2. **识别独立任务** - 判断是否应拆分为多个文档
 3. **用户确认拆分** - 通过多选界面让用户确认或修改任务拆分
-4. **生成结构化笔记** - 使用标准化的模板组织内容
-5. **保存到 Obsidian** - 按日期组织文件夹：`Claude Code/YYYY-MM-DD/`
-6. **添加元数据** - 包含标签、日期、状态和相关文件
-7. **Wikilinks 支持** - 自动将文件引用转换为 wikilinks 格式
-8. **任务管理** - 集成 Tasks 插件语法
-9. **数据查询** - 支持 Dataview 查询和索引
+4. **Session 持续更新** - 同一 session 中多次调用时追加到已有文档
+5. **压缩前保存提示** - Token 使用率 > 80% 时提示用户保存进度
+6. **断点续传支持** - 上下文压缩后基于已保存文档继续更新
+7. **生成结构化笔记** - 使用标准化的模板组织内容
+8. **保存到 Obsidian** - 按日期组织文件夹：`Claude Code/YYYY-MM-DD/`
+9. **添加元数据** - 包含标签、日期、状态和相关文件
+10. **Wikilinks 支持** - 自动将文件引用转换为 wikilinks 格式
+11. **任务管理** - 集成 Tasks 插件语法
+12. **数据查询** - 支持 Dataview 查询和索引
 
 ## 技术实现
 
@@ -109,6 +202,116 @@ EOF
 | `daily` | 创建/打开日记 | `obsidian-cli daily` |
 | `set-default` | 设置默认 vault | `obsidian-cli set-default obsidian` |
 | `print-default` | 查看默认配置 | `obsidian-cli print-default` |
+
+## Hook 集成（自动保存提示）
+
+### 上下文压缩前提示 Hook
+
+使用 Claude Code 的压缩前 hook 在系统即将压缩上下文时自动提示用户保存会话。
+
+**查找可用的压缩相关 Hook**：
+
+首先检查 Claude Code 提供的压缩相关 hooks：
+
+\`\`\`bash
+# 查看可用的 hook 类型
+claude --help hooks 2>&1 | grep -i compress
+
+# 或者检查文档中的 hooks 列表
+# 常见的压缩相关 hooks 可能包括：
+# - PreCompact: 上下文压缩前触发
+# - BeforeCompact: 压缩前
+# - OnCompact: 压缩时
+# 等等（具体以 Claude Code 文档为准）
+\`\`\`
+
+**创建压缩前提示 Hook**（假设 hook 名为 PreCompact）：
+
+\`\`\`bash
+# 创建 hook 目录
+mkdir -p ~/.claude/hooks
+
+# 创建压缩前提示 hook
+cat > ~/.claude/hooks/pre-compact-save-reminder.sh << 'EOF'
+#!/bin/bash
+# Hook: 在上下文压缩前提示用户保存会话
+# 触发时机: Claude Code 即将压缩上下文时
+
+echo ""
+echo "═══════════════════════════════════════════════════════════"
+echo "⚠️  上下文即将压缩"
+echo "═══════════════════════════════════════════════════════════"
+echo ""
+echo "Claude Code 即将压缩对话历史以释放上下文空间。"
+echo "建议先保存当前会话到 Obsidian，避免内容缺失。"
+echo ""
+echo "👉 保存会话: /obsidian-session"
+echo "👉 忽略提示: 继续当前操作"
+echo ""
+echo "═══════════════════════════════════════════════════════════"
+echo ""
+
+# 可选：使用 AskUserQuestion 询问用户
+# 这需要通过返回值告诉 Claude Code 调用该工具
+EOF
+
+chmod +x ~/.claude/hooks/pre-compact-save-reminder.sh
+\`\`\`
+
+**在 settings.json 中启用 hook**：
+
+\`\`\`json
+{
+  "hooks": {
+    "PreCompact": [
+      {
+        "name": "pre-compact-save-reminder",
+        "command": "bash",
+        "args": ["/Users/hortor/.claude/hooks/pre-compact-save-reminder.sh"]
+      }
+    ]
+  }
+}
+\`\`\`
+
+**注意**：请根据实际的 Claude Code 版本和文档调整 hook 名称。具体可用的 hooks 请参考：
+- Claude Code 官方文档
+- `~/.claude/settings.json` 中的 hooks 配置示例
+- `claude --help` 命令输出
+
+### Session 清理 Hook
+
+创建 stop hook 在 session 结束时清理临时文件。
+
+\`\`\`bash
+cat > ~/.claude/hooks/cleanup-session.sh << 'EOF'
+#!/bin/bash
+# Hook: session 结束时清理临时文件
+
+rm -f /tmp/claude-session-current-*.txt
+rm -f /tmp/claude-save-reminder-*
+
+echo "🧹 Session 临时文件已清理"
+EOF
+
+chmod +x ~/.claude/hooks/cleanup-session.sh
+\`\`\`
+
+**在 settings.json 中添加**：
+
+\`\`\`json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "name": "cleanup-session",
+        "command": "bash",
+        "args": ["/Users/hortor/.claude/hooks/cleanup-session.sh"]
+      }
+    ]
+  }
+}
+\`\`\`
 
 ## 插件集成
 
@@ -314,6 +517,45 @@ related_tasks:
 
 ## 会话分析流程
 
+### 步骤 0: 检查 Session 状态
+
+在开始分析前，检查当前 session 是否已有文档：
+
+**检查状态文件**：
+
+\`\`\`bash
+SESSION_STATE_FILE="/tmp/claude-session-current-$$.txt"
+CURRENT_DOC=$(cat "$SESSION_STATE_FILE" 2>/dev/null || echo "")
+SESSION_ID=$$  # 使用进程 ID 作为 session 标识
+\`\`\`
+
+**决策逻辑**：
+
+| 情况 | 行为 |
+|-----|------|
+| 首次调用（无状态文件） | 创建新文档 |
+| 后续调用（有状态文件）+ 无新标题 | 追加到当前文档 |
+| 提供新标题 | 创建新文档，更新状态文件 |
+| 使用 `--continue` | 强制追加到当前文档 |
+| 使用 `--file` | 追加到指定文档，更新状态文件 |
+
+**状态文件格式**：
+
+\`\`\`
+Claude Code/2026-03-18/添加用户确认任务拆分步骤.md
+\`\`\`
+
+**读取已保存文档**（用于断点续传）：
+
+\`\`\`bash
+if [ -n "$CURRENT_DOC" ]; then
+    # 读取现有文档内容
+    EXISTING_CONTENT=$(obsidian-cli create "$CURRENT_DOC" --read)
+    echo "📋 已读取现有文档: $CURRENT_DOC"
+    echo "📝 将追加新内容到文档末尾"
+fi
+\`\`\`
+
 ### 步骤 1: 识别关键信息
 
 从对话历史中提取：
@@ -498,6 +740,12 @@ related_tasks: [{相关任务标题}]
 # 设置变量
 TITLE="标题"
 DATE=$(date +%Y-%m-%d)
+SESSION_STATE_FILE="/tmp/claude-session-current-$$.txt"
+
+# 检查是否有当前文档
+CURRENT_DOC=$(cat "$SESSION_STATE_FILE" 2>/dev/null || echo "")
+
+# 准备内容
 CONTENT="---
 title: $TITLE
 date: $DATE
@@ -513,10 +761,53 @@ type: session-summary
 内容...
 "
 
-# 创建笔记
-obsidian-cli create "Claude Code/$DATE/$TITLE.md" --content "$CONTENT"
+if [ -n "$CURRENT_DOC" ] && [ "$#" -eq 0 ]; then
+    # 追加到现有文档
+    echo "📝 追加内容到: $CURRENT_DOC"
 
-echo "✅ 笔记已创建: Claude Code/$DATE/$TITLE.md"
+    # 添加续传分隔符
+    APPEND_CONTENT="
+
+---
+
+## 续传更新
+
+**更新时间**: $(date '+%Y-%m-%d %H:%M:%S')
+
+$CONTENT
+"
+
+    obsidian-cli create "$CURRENT_DOC" --content "$APPEND_CONTENT" --append
+    echo "✅ 内容已追加到: $CURRENT_DOC"
+else
+    # 创建新文档
+    DOC_PATH="Claude Code/$DATE/$TITLE.md"
+    obsidian-cli create "$DOC_PATH" --content "$CONTENT"
+
+    # 保存到状态文件
+    echo "$DOC_PATH" > "$SESSION_STATE_FILE"
+
+    echo "✅ 笔记已创建: $DOC_PATH"
+    echo "💾 状态已保存: $SESSION_STATE_FILE"
+fi
+\`\`\`
+
+**清理状态文件**（session 结束时）：
+
+\`\`\`bash
+# 在 .claude/hooks/stop 中清理
+rm -f /tmp/claude-session-current-*.txt
+\`\`\`
+
+**使用 --file 参数追加到指定文档**：
+
+\`\`\`bash
+# 追加到指定文档
+TARGET_DOC="Claude Code/2026-03-17/之前的任务.md"
+obsidian-cli create "$TARGET_DOC" --content "$NEW_CONTENT" --append
+
+# 更新状态文件
+echo "$TARGET_DOC" > "$SESSION_STATE_FILE"
 \`\`\`
 
 ## 标签分类
