@@ -552,8 +552,182 @@ if [ -n "$CURRENT_DOC" ]; then
     # 读取现有文档内容
     EXISTING_CONTENT=$(obsidian-cli create "$CURRENT_DOC" --read)
     echo "📋 已读取现有文档: $CURRENT_DOC"
-    echo "📝 将追加新内容到文档末尾"
+    echo "📝 将优化合并新内容"
 fi
+\`\`\`
+
+**智能合并策略**（当文档已存在时）：
+
+如果用户指定的文档已存在，应智能合并而非简单追加：
+
+| 操作 | 说明 | 示例 |
+|-----|------|------|
+| **更新摘要** | 整合新旧内容的摘要 | 原摘要 + 新进展 |
+| **合并解决方案** | 将新步骤添加到解决方案中 | 步骤1-3 + 步骤4-5 |
+| **更新成果列表** | 添加新成果到现有列表 | 原成果 + 新成果 |
+| **同步任务列表** | 更新任务状态，添加新任务 | [x] 已完成 + [ ] 新任务 |
+| **去重内容** | 识别并删除重复信息 | 检测并合并相似段落 |
+| **重组结构** | 确保文档逻辑连贯 | 调整章节顺序和层级 |
+
+**智能合并流程**：
+
+1. **解析现有文档结构**
+   \`\`\`bash
+   # 提取 frontmatter 和各章节
+   FRONTMATTER=$(extract_frontmatter "$EXISTING_CONTENT")
+   SUMMARY=$(extract_section "$EXISTING_CONTENT" "摘要")
+   SOLUTION=$(extract_section "$EXISTING_CONTENT" "解决方案")
+   TASKS=$(extract_section "$EXISTING_CONTENT" "任务列表")
+   OUTCOMES=$(extract_section "$EXISTING_CONTENT" "关键成果")
+   \`\`\`
+
+2. **分析新内容与旧内容的关系**
+   \`\`\`bash
+   # 检查是否是延续性工作
+   if is_continuation "$NEW_CONTENT" "$EXISTING_CONTENT"; then
+       MODE="merge"
+   else
+       MODE="append"
+   fi
+   \`\`\`
+
+3. **执行智能合并**
+   \`\`\`bash
+   if [ "$MODE" = "merge" ]; then
+       # 更新摘要
+       NEW_SUMMARY=$(merge_summaries "$SUMMARY" "$NEW_SUMMARY")
+
+       # 扩展解决方案
+       NEW_SOLUTION=$(append_to_section "$SOLUTION" "$NEW_SOLUTION")
+
+       # 更新成果列表
+       NEW_OUTCOMES=$(merge_lists "$OUTCOMES" "$NEW_OUTCOMES")
+
+       # 同步任务状态
+       NEW_TASKS=$(sync_task_status "$TASKS" "$NEW_TASKS")
+
+       # 检测并删除重复内容
+       FINAL_CONTENT=$(deduplicate_content "$NEW_SUMMARY" "$NEW_SOLUTION" ...)
+   fi
+   \`\`\`
+
+4. **重组文档结构**
+   \`\`\`bash
+   # 按标准模板重组
+   MERGED_CONTENT="---
+   $FRONTMATTER
+   ---
+
+   # 标题
+
+   ## 摘要
+   $NEW_SUMMARY
+
+   ## 问题 / 任务
+   $EXISTING_PROBLEM
+
+   ## 解决方案
+   $NEW_SOLUTION
+
+   ## 关键成果
+   $NEW_OUTCOMES
+
+   ## 任务列表
+   $NEW_TASKS
+
+   ## 修改的文件
+   $UPDATED_FILES
+
+   ## 相关
+   $UPDATED_REFS
+   "
+   \`\`\`
+
+**合并示例**：
+
+*原文档*：
+\`\`\`markdown
+## 摘要
+实现了用户认证功能，使用 JWT token。
+
+## 解决方案
+1. 创建登录接口
+2. 实现 JWT 验证中间件
+
+## 关键成果
+- ✅ 用户可以登录
+- ✅ Token 验证正常
+
+## 任务列表
+- [x] 创建登录接口
+- [x] 实现 JWT 中间件
+- [ ] 添加刷新 token 功能
+\`\`\`
+
+*新内容*：
+\`\`\`markdown
+## 摘要
+添加了 token 刷新机制，解决 token 过期问题。
+
+## 解决方案
+1. 实现刷新 token 接口
+2. 添加 token 黑名单
+
+## 关键成果
+- ✅ Token 可以自动刷新
+- ✅ 支持登出功能
+
+## 任务列表
+- [x] 实现刷新 token
+- [x] 添加登出功能
+\`\`\`
+
+*智能合并后*：
+\`\`\`markdown
+## 摘要
+实现了用户认证功能，使用 JWT token。添加了 token 刷新机制和登出功能，完善了认证体系。
+
+## 解决方案
+1. 创建登录接口
+2. 实现 JWT 验证中间件
+3. 实现刷新 token 接口
+4. 添加 token 黑名单
+
+## 关键成果
+- ✅ 用户可以登录
+- ✅ Token 验证正常
+- ✅ Token 可以自动刷新
+- ✅ 支持登出功能
+
+## 任务列表
+- [x] 创建登录接口
+- [x] 实现 JWT 中间件
+- [x] 实现刷新 token
+- [x] 添加登出功能
+- [ ] 添加限流功能
+\`\`\`
+
+**检测重复内容**：
+
+\`\`\`bash
+# 简单的重复检测（基于相似度）
+detect_duplicates() {
+    local existing="$1"
+    local new="$2"
+
+    # 提取关键段落
+    local existing_keypoints=$(extract_keypoints "$existing")
+    local new_keypoints=$(extract_keypoints "$new")
+
+    # 计算相似度
+    local similarity=$(calculate_similarity "$existing_keypoints" "$new_keypoints")
+
+    if [ "$similarity" -gt 80 ]; then
+        echo "⚠️  检测到高度相似内容（$similarity%），建议合并而非追加"
+        return 0
+    fi
+    return 1
+}
 \`\`\`
 
 ### 步骤 1: 识别关键信息
@@ -762,23 +936,24 @@ type: session-summary
 "
 
 if [ -n "$CURRENT_DOC" ] && [ "$#" -eq 0 ]; then
-    # 追加到现有文档
-    echo "📝 追加内容到: $CURRENT_DOC"
+    # 智能合并到现有文档
+    echo "📝 智能合并到: $CURRENT_DOC"
 
-    # 添加续传分隔符
-    APPEND_CONTENT="
+    # 读取现有文档
+    EXISTING=$(obsidian-cli create "$CURRENT_DOC" --read 2>/dev/null || echo "")
 
----
+    if [ -n "$EXISTING" ]; then
+        # 执行智能合并
+        MERGED_CONTENT=$(intelligent_merge "$EXISTING" "$CONTENT")
 
-## 续传更新
-
-**更新时间**: $(date '+%Y-%m-%d %H:%M:%S')
-
-$CONTENT
-"
-
-    obsidian-cli create "$CURRENT_DOC" --content "$APPEND_CONTENT" --append
-    echo "✅ 内容已追加到: $CURRENT_DOC"
+        # 重写文档
+        obsidian-cli create "$CURRENT_DOC" --content "$MERGED_CONTENT"
+        echo "✅ 内容已智能合并到: $CURRENT_DOC"
+    else
+        # 文档不存在，创建新文档
+        obsidian-cli create "$CURRENT_DOC" --content "$CONTENT"
+        echo "✅ 内容已创建: $CURRENT_DOC"
+    fi
 else
     # 创建新文档
     DOC_PATH="Claude Code/$DATE/$TITLE.md"
@@ -790,6 +965,105 @@ else
     echo "✅ 笔记已创建: $DOC_PATH"
     echo "💾 状态已保存: $SESSION_STATE_FILE"
 fi
+\`\`\`
+
+**智能合并函数实现**：
+
+\`\`\`bash
+# 智能合并函数
+intelligent_merge() {
+    local existing="$1"
+    local new="$2"
+
+    # 解析现有文档
+    local existing_summary=$(extract_section "$existing" "摘要")
+    local existing_solution=$(extract_section "$existing" "解决方案")
+    local existing_outcomes=$(extract_section "$existing" "关键成果")
+    local existing_tasks=$(extract_section "$existing" "任务列表")
+
+    # 解析新内容
+    local new_summary=$(extract_section "$new" "摘要")
+    local new_solution=$(extract_section "$new" "解决方案")
+    local new_outcomes=$(extract_section "$new" "关键成果")
+    local new_tasks=$(extract_section "$new" "任务列表")
+
+    # 合并摘要
+    local merged_summary=$(merge_summaries "$existing_summary" "$new_summary")
+
+    # 扩展解决方案
+    local merged_solution=$(merge_solutions "$existing_solution" "$new_solution")
+
+    # 合并成果列表
+    local merged_outcomes=$(merge_outcomes "$existing_outcomes" "$new_outcomes")
+
+    # 同步任务状态
+    local merged_tasks=$(sync_tasks "$existing_tasks" "$new_tasks")
+
+    # 重组完整文档
+    local frontmatter=$(extract_frontmatter "$existing")
+    local title=$(extract_title "$existing")
+
+    echo "---
+$frontmatter
+---
+
+# $title
+
+## 摘要
+$merged_summary
+
+## 问题 / 任务
+$(extract_section "$existing" "问题 / 任务")
+
+## 解决方案
+$merged_solution
+
+## 关键成果
+$merged_outcomes
+
+## 任务列表
+$merged_tasks
+
+## 修改的文件
+$(merge_file_lists "$existing" "$new")
+
+## 相关
+$(merge_refs "$existing" "$new")
+"
+}
+
+# 提取章节
+extract_section() {
+    local content="$1"
+    local section="$2"
+    echo "$content" | sed -n "/## $section/,/## /p" | sed '$d'
+}
+
+# 合并摘要
+merge_summaries() {
+    local old="$1"
+    local new="$2"
+
+    # 检查是否有新内容
+    if is_similar "$old" "$new"; then
+        echo "$old"
+    else
+        echo "$old  $new"
+    fi
+}
+
+# 合并解决方案
+merge_solutions() {
+    local old="$1"
+    local new="$2"
+
+    # 提取步骤编号
+    local last_step=$(echo "$old" | grep -oE "^[0-9]+\\." | sort -n | tail -1)
+
+    # 重新编号新内容并追加
+    echo "$old
+$(echo "$new" | renumber_steps "$((last_step + 1))")"
+}
 \`\`\`
 
 **清理状态文件**（session 结束时）：
