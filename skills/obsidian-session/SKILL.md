@@ -1,167 +1,239 @@
 ---
 name: obsidian-session
-description: 保存当前 Claude Code 会话摘要到 Obsidian 仓库。支持智能合并、多任务拆分、session 持续更新。集成 Templater、Tasks、Dataview 插件。
-version: 1.0.1
-allowed_tools: ["Bash", "AskUserQuestion"]
+description: 基于 transcript 保存 Claude Code 会话到 Obsidian。完整记录不受上下文压缩影响。
+version: 1.1.0
+allowed_tools: ["Bash", "AskUserQuestion", "Read", "Glob", "Write"]
 ---
 
 # /obsidian-session - 保存会话到 Obsidian
 
-将 Claude Code 会话保存为结构化笔记，存储在 Obsidian 仓库中。自动分析会话内容，识别独立任务，支持智能文档合并和断点续传。
+基于完整的 **transcript 日志**保存 Claude Code 会话到 Obsidian，不受上下文压缩影响。
 
-## 快速开始
+## 🎯 使用方法
 
-### 首次使用
+```bash
+/obsidian-session "标题"        # 指定标题
+/obsidian-session               # 自动生成标题
+```
 
-bash
-# 1. 设置默认 vault（仅需一次）
-obsidian-cli set-default obsidian
+例如：
+```bash
+/obsidian-session "优化数据库查询"
+/obsidian-session "修复登录bug"
+/obsidian-session               # 自动分析并生成标题
+```
 
-# 2. 保存当前会话
-/obsidian-session
+## 📋 执行步骤
 
-# 3. 使用自定义标题
-/obsidian-session 优化数据库查询性能
+### 0. 查找 Transcript
 
+```
+~/.claude/projects/<项目路径>/<session-id>.jsonl
+```
 
-### Session 中多次使用
+**查找：**
+```bash
+ls -t ~/.claude/sessions/*.json | head -1 | xargs jq -r '.sessionId'
+ls -t ~/.claude/projects/-*/**/*.jsonl 2>/dev/null | head -1
+```
 
-bash
-# 首次调用 - 创建新文档
-/obsidian-session
+### 1. 检查文档是否存在
 
-# 后续调用 - 自动追加到同一文档
-/obsidian-session
+**不存在：** 继续执行步骤 2-5（正常生成新文档）
+**已存在：** 执行步骤 6（智能合并文档）
 
-# 或明确指定继续
-/obsidian-session --continue
+### 2. 分析会话内容
 
-# 追加到指定文档
-/obsidian-session --file "Claude Code/2026-03-17/之前的任务.md"
+提取：
+- 主要问题和需求
+- 讨论的解决方案
+- 完成的成果
+- 修改的文件
 
+**分析方法：**
+```bash
+# 统计关键词频率
+jq -r '.message.content' transcript.jsonl | grep -oE '\b[a-z]{4,}\b' | sort | uniq -c | sort -rn | head -20
 
-## 核心功能
+# 提取用户消息
+jq -r 'select(.type == "user") | .message.content' transcript.jsonl
+```
 
-### 1. 自动会话分析
+### 3. 生成标题
 
-提取关键信息：
-- 主要问题和解决方案
-- 关键决策和成果
-- 修改的文件列表
-- Git commit 记录
+**如果用户提供了标题：** 直接使用
 
-### 2. 智能任务拆分
+**如果没有提供标题：**
+- 基于步骤 2 的完整内容分析
+- 统计关键词频率
+- 识别主要动作和核心对象
+- 生成 2-8 字标题，动词开头
+- 示例：`优化数据库`、`修复bug`、`实现功能`
 
-自动检测独立任务并询问是否拆分：
+### 4. 生成文档
 
-| 拆分信号 | 示例 |
-|---------|------|
-| 多个 Git 提交 | commit 1: 修复bug + commit 2: 新功能 |
-| 不同功能模块 | 模块A: 用户系统 + 模块B: 支付系统 |
-| 明确的任务切换 | "现在做X" → "接下来做Y" |
-| 时间间隔明显 | 上午: 修复缓存 + 下午: 实现 buff |
+**智能标签：**
+- 基础：`claude-session` + 状态
+- 内容：根据 transcript 提取
+  - 技术领域：`database`、`frontend`、`backend`
+  - 任务类型：`bugfix`、`feature`、`optimization`
+  - 具体工具：`mysql`、`redis`、`docker`
+  - 关键词：`jwt`、`404-error`、`用户管理`
 
-### 3. 智能文档合并
+### 5. 保存
 
-当文档已存在时，智能合并而非简单追加：
-- 更新摘要（整合新旧内容）
-- 扩展解决方案（追加新步骤并重新编号）
-- 合并成果列表
-- 同步任务状态
-- 检测并删除重复内容
-- 重组文档结构
+**使用 obsidian-cli（优先）：**
+```bash
+if command -v obsidian-cli &> /dev/null; then
+    # 获取当前日期
+    DATE=$(date +%Y-%m-%d)
+    # 保存到 Claude Code/日期目录/标题.md
+    obsidian-cli create --content "$CONTENT" --vault obsidian "Claude Code/${DATE}/${标题}.md"
+else
+    # 直接写入文件
+    VAULT_PATH="${OBSIDIAN_DEFAULT_VAULT:-~/Documents/work/obsidian}"
+    DATE=$(date +%Y-%m-%d)
+    mkdir -p "$VAULT_PATH/Claude Code/$DATE"
+    # 写入文件...
+fi
+```
 
-### 4. Session 持续更新
+### 6. 智能合并（文档已存在）
 
-使用状态文件追踪当前文档：
+读取现有文档 → 分析新内容 → 智能合并 → 去重 → 保存
 
-bash
-# 状态文件位置
-/tmp/claude-session-current-$$.txt
+## 📊 Transcript 格式
 
-# 检查当前文档
-CURRENT_DOC=$(cat "/tmp/claude-session-current-$$.txt" 2>/dev/null || echo "")
+```json
+{
+  "type": "user|assistant|tool_use",
+  "timestamp": "2026-03-19T02:39:12.183Z",
+  "message": {"role": "user", "content": "消息内容"},
+  "sessionId": "87129218-ea0c-4c5f-8234-97af71673827"
+}
+```
 
+## ✨ 核心优势
 
-### 5. 断点续传
+| 特性 | 优势 |
+|-----|------|
+| **完整性** | ✅ 完整保留整个会话历史 |
+| **时间范围** | ✅ 不受上下文窗口限制 |
+| **可靠性** | ✅ 即使上下文被压缩也能完整记录 |
+| **智能分析** | ✅ AI 自动提取关键信息 |
+| **自动标题** | ✅ 基于完整内容自动生成 |
+| **智能标签** | ✅ 根据内容动态生成标签 |
+| **智能合并** | ✅ 多次调用时智能合并 |
+| **工具兼容** | ✅ 优先 obsidian-cli，自动回退 |
 
-当上下文被压缩后：
-- 读取已保存文档
-- 补充缺失信息
-- 添加续传标记
-- 继续更新文档
+## 🎯 最佳实践
 
-## 文档结构
+**标题：** 具体的中文标题（2-8字），动词开头
+**标签：** 2-7 个，优先级：核心业务 > 技术领域 > 任务类型
+**内容：** 摘要简洁、方案详细、文件用 wikilinks
 
-生成的文档使用统一模板：
+## 🔗 与其他 Obsidian 技能的集成
 
-markdown
----
-title: 标题
-date: 2026-03-18
-tags:
-  - claude-session
-  - 新功能
-status: 已完成
-type: session-summary
-related_tasks: [相关任务]
----
+本技能可与其他 Obsidian 技能配合使用，增强功能：
 
-# 标题
+### obsidian:obsidian-markdown
+处理 Obsidian Flavored Markdown 语法：
+- **Wikilinks**：`[[文件名]]` 自动链接到其他笔记
+- **Callouts**：使用 `> [!INFO]` 等语法创建提示框
+- **Tags**：`#标签` 语法自动索引
+- **Properties**：YAML frontmatter 元数据
 
-## 摘要
-2-3句话概述完成的工作
-
-## 问题 / 任务
-最初的请求或问题
-
-## 解决方案
-关键步骤、决策和代码
-
-## 关键成果
-- 成果 1
-- 成果 2
-
-## 任务列表
-- [x] 已完成任务
-- [/] 进行中任务
-- [ ] 待完成任务
-
+```markdown
 ## 修改的文件
-- [[file1.md]]
-- [[file2.py]]
+- [[skills/obsidian-session/SKILL.md]] - 技能主文档
+- [[README.md]] - 项目说明
 
-## 相关
-- Git commit: {commit-id}
-- 相关任务: [[相关文档]]
+> [!TIP] 提示
+> 可以使用 obsidian:obsidian-markdown 技能来优化格式
+```
 
+### obsidian:obsidian-bases
+创建会话统计数据库：
+- 记录所有会话的元数据
+- 按日期、项目、标签筛选
+- 统计会话时长和频率
 
-## 最佳实践
+```markdown
+<!-- 可创建一个 Session Base -->
+会话名称 | 日期 | 标签 | 状态 | 时长
+---------|------|------|------|------
+优化技能 | 2026-03-19 | optimization | 已完成 | 2h
+修复bug | 2026-03-19 | bugfix | 已完成 | 1h
+```
 
-### 推荐做法
+### obsidian:json-canvas
+可视化会话关系：
+- 创建会话依赖关系图
+- 展示技能演进历程
+- 追踪问题和解决方案的关联
 
-- 使用具体的、描述性的中文标题（2-8个字）
-- 动词开头（如"修复"、"实现"、"优化"）
-- 每个独立任务创建单独文档
-- 使用 related_tasks 字段关联相关任务
-- 保持摘要简洁（2-3句话）
-- 所有文件引用使用 wikilinks：[[文件路径]]
-- 添加相关标签便于搜索
+## 🔧 技术细节
 
-### 避免
+**环境变量：**
+- `CLAUDE_SESSION_ID`：会话 ID（自动检测）
+- `OBSIDIAN_DEFAULT_VAULT`：Vault 路径（默认：`~/Documents/work/obsidian`）
 
-- 使用通用标题如"会话笔记"
-- 将多个独立任务混在一个文档
-- 摘要过长或过短
-- 混合中英文内容
-- 忘记添加标签
-- 省略修改的文件列表
+**文档路径规则：**
+- 基础目录：`Claude Code/`
+- 日期目录：`YYYY-MM-DD/`（使用当前日期）
+- 完整路径：`Claude Code/YYYY-MM-DD/标题.md`
+- 示例：`Claude Code/2026-03-19/优化数据库查询.md`
+
+**依赖：**
+- 必需：Bash、Read、Write
+- 可选：obsidian-cli（推荐）、jq
+
+**回退：** obsidian-cli 未安装 → 直接文件写入
+
+**相关技能：**
+- `obsidian:obsidian-cli` - Vault 管理和笔记操作（本技能使用）
+- `obsidian:obsidian-markdown` - Obsidian Flavored Markdown 语法支持（wikilinks、callouts 等）
+- `obsidian:obsidian-bases` - 数据库功能（可用于会话数据统计）
+- `obsidian:json-canvas` - 可视化画布（可用于会话关系图）
+
+## 📝 示例
+
+### 示例 1：指定标题
+
+```bash
+/obsidian-session "优化数据库查询"
+```
+
+**生成：**
+- 标题：`优化数据库查询`
+- 标签：`[claude-session, 已完成, database, mysql, optimization]`
+
+### 示例 2：自动标题
+
+```bash
+/obsidian-session
+```
+
+**基于完整内容分析生成：**
+- 标题：`实现用户认证`
+- 标签：`[claude-session, 已完成, feature, authentication, jwt]`
+
+### 示例 3：智能合并
+
+```bash
+# 第一次
+/obsidian-session "实现新功能"
+
+# 第二次（继续开发）
+/obsidian-session "实现新功能"
+```
+
+**自动合并：** 更新摘要、添加新方案、追加成果、更新任务状态
 
 ## 版本历史
 
-- **1.0.1** (2026-03-18) - 添加智能文档合并机制，优化文档结构，从 1197 行精简到 169 行
-- **1.0.0** (2026-03-18) - 初始版本，包含会话分析、任务拆分、session 持续更新功能
+- **1.1.0** (2026-03-19) - 基于完整 transcript 日志
+- **1.0.x** - 初始版本
 
 ---
 
-*保存会话笔记，便于知识管理和经验积累。支持多任务拆分、智能合并、session 持续更新。集成 Templater、Tasks、Dataview 插件功能。*

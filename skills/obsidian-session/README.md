@@ -1,87 +1,179 @@
-# save-session 技能
+# obsidian-session v1.1 - 基于 Transcript 的会话文档生成
 
-保存当前 Claude Code 会话摘要到 Obsidian 仓库，使用组织化的文件夹结构。
+保存 Claude Code 会话到 Obsidian 知识库。**使用完整的 transcript 日志**，即使上下文被压缩也能完整记录会话历史。
+
+## 🎉 v1.1 重大更新
+
+**不再依赖上下文窗口！** 现在使用完整的 transcript 日志来生成文档。
+
+| 特性 | v1.0.x (上下文) | v1.1 (Transcript) ✨ |
+|-----|----------------|---------------------|
+| **完整性** | ❌ 会被压缩丢失 | ✅ 完整保留 |
+| **时间范围** | ⏱️ 30分钟左右 | ♾️ 整个会话 |
+| **断点续传** | ❌ 困难 | ✅ 完美支持 |
+| **实现方式** | Bash脚本解析 | AI智能分析 |
 
 ## 功能特性
 
-- 自动分析会话内容，提取关键信息
-- 识别独立任务，支持多任务拆分
-- 生成标准化的笔记结构
-- 集成 Obsidian 插件（Templater、Tasks、Dataview）
-- 支持中文标题和标签分类
+- ✅ 基于 transcript 的完整会话解析
+- ✅ AI 自动提取关键信息（需求、方案、成果）
+- ✅ 智能标签生成（根据内容动态提取）
+- ✅ 自动标题生成（基于完整内容分析）
+- ✅ 智能文档合并（多次调用时自动更新）
+- ✅ obsidian-cli 集成（带自动回退）
+- ✅ 标准化文档结构
 
-## 安装方法
+## 快速开始
 
-### 方法 1：手动安装
-
-```bash
-# 创建技能目录
-mkdir -p ~/.claude/skills/save-session
-
-# 复制文件
-cp -r SKILL.md ~/.claude/skills/save-session/
-cp -r templates ~/.claude/skills/save-session/
-```
-
-### 方法 2：从 GitHub 安装
+### 使用方法
 
 ```bash
-# 克隆仓库
-git clone https://github.com/yourusername/save-session-skill.git /tmp/save-session
+# 指定标题
+/obsidian-session "优化数据库查询"
 
-# 复制到技能目录
-cp -r /tmp/save-session/* ~/.claude/skills/save-session/
+# 自动生成标题（AI 基于内容分析）
+/obsidian-session
 ```
 
-## 使用方法
+### 文档保存位置
 
-在 Claude Code 中：
-
-```bash
-/save-session                          # 自动分析并生成文档
-/save-session 自定义标题               # 使用自定义标题创建文档
+```
+Claude Code/
+├── 2026-03-17/
+│   └── xxx.md
+├── 2026-03-18/
+│   └── yyy.md
+├── 2026-03-19/
+│   └── 优化数据库查询.md
+└── README.md
 ```
 
-## 依赖要求
-
-- Obsidian CLI 工具
-- Obsidian 插件（可选）：
-  - Templater - 动态模板
-  - Tasks - 任务管理
-  - Dataview - 数据查询
+文档自动保存到 `Claude Code/YYYY-MM-DD/` 目录，按日期组织。
 
 ## 技能结构
 
 ```
-save-session/
-├── SKILL.md           # 技能主文档
-├── templates/         # 模板文件
-│   └── 会话笔记模板.md
-└── README.md          # 本文件
+obsidian-session/
+├── SKILL.md       # 技能主文档（完整实现说明）
+├── README.md      # 本文件（用户指南）
+├── skill.json     # 技能配置
+└── LICENSE        # MIT 许可证
 ```
 
-## 配置说明
+## Transcript 文件位置
 
-首次使用需要设置默认 vault：
+Claude Code 会自动保存完整的交流日志：
+
+```
+~/.claude/projects/<项目路径>/<session-id>.jsonl
+```
+
+**查找当前会话的 transcript**：
 
 ```bash
-obsidian-cli set-default obsidian
-obsidian-cli print-default  # 验证配置
+# 方法 1: 找到 session ID
+cat ~/.claude/sessions/*.json | jq -r '.sessionId'
+
+# 方法 2: 直接查找最新 transcript
+ls -t ~/.claude/projects/-*/**/*.jsonl 2>/dev/null | head -1
 ```
 
-## 模板使用
+## 环境变量
 
-将模板复制到目标 vault：
+| 变量 | 说明 | 默认值 |
+|-----|------|-------|
+| `CLAUDE_SESSION_ID` | 会话 ID | 自动检测 |
+| `OBSIDIAN_DEFAULT_VAULT` | 默认 vault 路径 | `~/Documents/work/obsidian` |
 
+## 依赖要求
+
+- **必需**：Bash、Read、Write
+- **可选**：
+  - obsidian-cli（推荐）- Obsidian CLI 工具
+  - jq - JSON 解析器（用于 transcript 分析）
+
+**安装 obsidian-cli**：
 ```bash
-cp ~/.claude/skills/save-session/templates/会话笔记模板.md \
-   "/path/to/vault/Templates/会话笔记模板.md"
+npm install -g @lynxtaa/obsidian-cli
 ```
+
+## 与其他 Obsidian 技能的集成
+
+本技能可与其他 Obsidian 技能配合使用：
+
+### obsidian:obsidian-markdown
+处理 Obsidian Flavored Markdown 语法（wikilinks、callouts、tags 等）
+
+### obsidian:obsidian-bases
+创建会话统计数据库，按日期、项目、标签筛选
+
+### obsidian:json-canvas
+可视化会话关系图和技能演进历程
+
+详细集成方法请参考 [SKILL.md](SKILL.md)。
+
+## 生成的文档结构
+
+```markdown
+---
+title: 标题
+date: 2026-03-19
+tags: [claude-session, 已完成, database, optimization]
+status: 已完成
+type: session-summary
+session_id: xxx
+created_by: obsidian-session v1.1.0
+---
+
+# 标题
+
+## 摘要
+会话概要（2-3句话）
+
+## 主要需求
+- 需求 1
+- 需求 2
+
+## 解决方案
+### 1. 方案标题
+详细说明...
+
+## 完成的成果
+1. ✅ 成果 1
+2. ✅ 成果 2
+
+## 修改的文件
+- [[path/to/file]] - 说明
+
+## 统计信息
+- 用户消息数量
+- 会话时长
+- 关键词统计
+```
+
+## 智能标签生成
+
+标签根据内容动态提取：
+
+**基础标签**：
+- `claude-session` - 所有会话文档
+- `已完成` / `进行中` - 状态标签
+
+**内容标签**（自动提取）：
+- **技术领域**：`database`、`frontend`、`backend`、`devops`
+- **任务类型**：`bugfix`、`feature`、`optimization`、`refactor`
+- **具体工具**：`mysql`、`redis`、`docker`、`git`
+- **关键词**：`jwt`、`404-error`、`用户管理`、`api`
+
+## 版本历史
+
+- **1.1.0** (2026-03-19) - 使用完整 transcript 日志，AI 驱动分析
+- **1.0.x** (2026-03-18) - 初始版本（基于上下文）
 
 ## 开发者
 
 - 光
-- GitHub: https://github.com/yourusername
+- 项目地址: https://github.com/yourusername/obsidian-session
 
 ## 许可证
 
